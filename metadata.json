@@ -1,0 +1,6 @@
+{
+  "name": "TrendForge AI",
+  "description": "Automated viral content engine that scrapes trending posts from Reddit and Quora and orchestrates a 4-agent pipeline to generate and publish 9:16 short-form Reels, TikToks, and image carousels.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

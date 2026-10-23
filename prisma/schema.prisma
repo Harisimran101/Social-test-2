@@ -1,0 +1,123 @@
+// TrendForge AI — Production PostgreSQL Schema (Prisma ORM)
+// Supports deduplicated Reddit/Quora post caching, 4-stage multi-agent job orchestration,
+// OAuth2 social token storage with 24h refresh windows, and automated publish telemetry.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SourcePlatform {
+  REDDIT
+  QUORA
+}
+
+enum PostStatus {
+  RAW
+  PROCESSING
+  GENERATED
+}
+
+enum ContentFormat {
+  VIDEO_REEL
+  IMAGE_CAROUSEL
+}
+
+enum AgentState {
+  SCRIPTING
+  AUDIO
+  VISUALS
+  RENDERING
+  READY
+  FAILED
+}
+
+enum SocialPlatform {
+  TIKTOK
+  INSTAGRAM
+}
+
+enum PublishMode {
+  DIRECT
+  DRAFT
+}
+
+enum PublishStatus {
+  PENDING
+  PUBLISHED
+  ERROR
+}
+
+model ScrapedPost {
+  id            String         @id @default(cuid())
+  source        SourcePlatform
+  externalId    String         @unique
+  urlHash       String         @unique // SHA-256 hash of canonical URL for strict deduplication
+  community     String         // e.g. "r/artificial", "r/cscareerquestions", "Quora · System Architecture"
+  title         String
+  content       String         @db.Text
+  topComments   Json           // Array of { id, author, body, score }
+  upvotes       Int
+  upvoteRatio   Float          @default(0.92)
+  numComments   Int            @default(0)
+  velocityPerHr Int            @default(0) // Computed upvotes/hr or view surge rate
+  viralityScore Int            // Normalized 1-100 score based on engagement-to-time decay ratio
+  scrapedAt     DateTime       @default(now())
+  status        PostStatus     @default(RAW)
+  jobs          ContentJob[]
+
+  @@index([source, viralityScore(sort: Desc)])
+  @@index([community, scrapedAt(sort: Desc)])
+}
+
+model ContentJob {
+  id          String        @id @default(cuid())
+  postId      String
+  post        ScrapedPost   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  format      ContentFormat
+  preset      String        // "REDDIT_STORY_GAMEPLAY" | "AI_CINEMATIC_BROLL" | "EDUCATIONAL_CAROUSEL_10"
+  agentState  AgentState    @default(SCRIPTING)
+  scriptJson  Json?         // { scroll_stopping_hook, script_segments[], caption, hashtags[], word_timestamps[] }
+  audioUrl    String?       // Public R2/S3 .mp3 / .wav voiceover URL
+  mediaUrls   String[]      // Final 1080x1920 H.264 .mp4 URL or array of 1080x1350 .jpg slide URLs
+  caption     String?       @db.Text
+  logs        Json          @default("[]") // Timestamped execution trace per agent
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  publishLogs PublishLog[]
+
+  @@index([agentState, createdAt(sort: Desc)])
+}
+
+model SocialAccount {
+  id           String         @id @default(cuid())
+  platform     SocialPlatform
+  accountName  String         // e.g. "@trendforge.ai"
+  externalId   String         // TikTok open_id or Instagram Business ig-user-id
+  accessToken  String         @db.Text
+  refreshToken String         @db.Text
+  scopes       String[]       // e.g. ["video.publish", "video.upload"] or ["instagram_business_basic", "instagram_business_content_publish"]
+  expiresAt    DateTime
+  updatedAt    DateTime       @updatedAt
+
+  @@unique([platform, externalId])
+}
+
+model PublishLog {
+  id                String         @id @default(cuid())
+  jobId             String
+  job               ContentJob     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  platform          SocialPlatform
+  publishMode       PublishMode    @default(DIRECT)
+  externalPublishId String?        // TikTok publish_id or IG media_publish creation_id
+  status            PublishStatus  @default(PENDING)
+  errorMessage      String?        @db.Text
+  scheduledFor      DateTime?
+  createdAt         DateTime       @default(now())
+
+  @@index([jobId, platform])
+}
